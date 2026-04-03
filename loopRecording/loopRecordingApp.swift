@@ -8,7 +8,7 @@
 import SwiftUI
 
 @main
-struct RehearApp: App {
+struct loopRecordingApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
