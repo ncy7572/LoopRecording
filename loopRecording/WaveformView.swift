@@ -44,7 +44,9 @@ struct WaveformView: View {
                 filledFraction: filledFraction,
                 playheadFraction: playheadFraction,
                 selection: selection,
-                onSeek: { f in onScrub(f); onScrubEnd(f) }
+                onScrub: onScrub,
+                onScrubEnd: onScrubEnd,
+                onSeekTap: onSeekTap
             )
             .frame(height: 36)
         }
@@ -67,22 +69,21 @@ private struct DetailWaveView: View {
     var onSelectionChanged: ((Double, Double) -> Void)?
     var onSelectionCleared: (() -> Void)?
 
-    private let visiblePoints = 200
+    private let visibleSeconds: Double = 30   // detail view always spans this many seconds
 
     @State private var dragBaseFraction: Double? = nil
     // Selection gesture state
     @State private var selectionModeActive: Bool = false            // true after long-press
     @State private var selectionAnchorFraction: Double? = nil       // set from drag startLocation
-    @State private var draggingHandle: HandleSide? = nil            // which handle is being moved
+    @State private var dragAnchorFraction: Double? = nil            // fixed handle position during a handle drag
     @State private var dragIsScrubbingInSelectionMode: Bool = false // drag started away from handles
+    @State private var longPressConsumed: Bool = false              // true when long-press fired; suppresses tap in onEnded
 
     private let green    = Color(red: 0.20, green: 0.85, blue: 0.55)
     private let greenDim = Color(red: 0.12, green: 0.40, blue: 0.28)
     private let red      = Color(red: 1.00, green: 0.35, blue: 0.35)
     private let selectionFill = Color(red: 0.30, green: 0.65, blue: 1.00).opacity(0.18)
     private let selectionEdge = Color(red: 0.45, green: 0.75, blue: 1.00)
-
-    private enum HandleSide { case start, end }
 
     // How close (points) the finger must be to a handle to grab it
     @ScaledMetric(relativeTo: .body) private var handleGrabRadius: CGFloat = 28
@@ -91,7 +92,11 @@ private struct DetailWaveView: View {
         GeometryReader { geo in
             let w  = geo.size.width
             let h  = geo.size.height
-            let pw = w / CGFloat(visiblePoints)
+            // pw: pixels per waveform point, sized so the view always shows visibleSeconds
+            // regardless of the total buffer length.
+            let pw = totalSeconds > 0
+                ? w * CGFloat(totalSeconds) / CGFloat(visibleSeconds * Double(amplitudes.count))
+                : w / 200
 
             let playheadPt    = CGFloat(playheadFraction) * CGFloat(amplitudes.count)
             let contentOffset = playheadPt * pw - w / 2
@@ -116,6 +121,7 @@ private struct DetailWaveView: View {
             .contentShape(Rectangle())
             // Long press: enter selection mode if not active, or cancel selection if active.
             .onLongPressGesture(minimumDuration: 0.4, maximumDistance: 25) {
+                longPressConsumed = true
                 if selectionModeActive {
                     // Cancel — clear selection and exit selection mode
                     onSelectionCleared?()
@@ -139,6 +145,9 @@ private struct DetailWaveView: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { v in
+                        // Reset on the very first event of a new gesture
+                        if v.translation == .zero { longPressConsumed = false }
+
                         let touchX = v.location.x
                         let n      = Double(amplitudes.count)
                         let toFrac = { (x: CGFloat) -> Double in
@@ -147,12 +156,8 @@ private struct DetailWaveView: View {
                         }
 
                         // ── 1. Continue handle drag ──────────────────────────────────────
-                        if let side = draggingHandle, let sel = selection {
-                            let clamped = toFrac(touchX)
-                            switch side {
-                            case .start: onSelectionChanged?(clamped, sel.endFraction)
-                            case .end:   onSelectionChanged?(sel.startFraction, clamped)
-                            }
+                        if let anchor = dragAnchorFraction {
+                            onSelectionChanged?(anchor, toFrac(touchX))
                             return
                         }
 
@@ -187,12 +192,12 @@ private struct DetailWaveView: View {
                             let startX = CGFloat(sel.normalizedStart) * CGFloat(n) * pw - contentOffset
                             let endX   = CGFloat(sel.normalizedEnd)   * CGFloat(n) * pw - contentOffset
                             if abs(v.startLocation.x - startX) < handleGrabRadius {
-                                draggingHandle = .start
-                                onSelectionChanged?(toFrac(touchX), sel.endFraction)
+                                dragAnchorFraction = sel.normalizedEnd
+                                onSelectionChanged?(sel.normalizedEnd, toFrac(touchX))
                                 return
                             } else if abs(v.startLocation.x - endX) < handleGrabRadius {
-                                draggingHandle = .end
-                                onSelectionChanged?(sel.startFraction, toFrac(touchX))
+                                dragAnchorFraction = sel.normalizedStart
+                                onSelectionChanged?(sel.normalizedStart, toFrac(touchX))
                                 return
                             }
                         }
@@ -229,13 +234,9 @@ private struct DetailWaveView: View {
                         let isTap = v.translation.width.magnitude < 6 && v.translation.height.magnitude < 6
 
                         // Finish handle drag
-                        if let side = draggingHandle, let sel = selection {
-                            let clamped = toFrac(touchX)
-                            switch side {
-                            case .start: onSelectionChanged?(clamped, sel.endFraction)
-                            case .end:   onSelectionChanged?(sel.startFraction, clamped)
-                            }
-                            draggingHandle = nil
+                        if let anchor = dragAnchorFraction {
+                            onSelectionChanged?(anchor, toFrac(touchX))
+                            dragAnchorFraction = nil
                             return
                         }
 
@@ -265,7 +266,12 @@ private struct DetailWaveView: View {
                             return
                         }
 
-                        draggingHandle = nil
+                        // Long press ended — the long press handler already ran; don't treat as a tap.
+                        if longPressConsumed {
+                            longPressConsumed = false
+                            dragBaseFraction = nil
+                            return
+                        }
 
                         // Finish normal scrub / tap — taps jump to position and play;
                         // drags only reposition (recording resumes via onScrubEnd).
@@ -355,8 +361,6 @@ private struct DetailWaveView: View {
         let n = Double(amplitudes.count)
 
         let secondsPerPoint = totalSeconds / n
-        let filledSeconds   = filledFraction * totalSeconds
-        let bufferStart     = Date().addingTimeInterval(-filledSeconds)
 
         let markerEvery: Double = 5
         let pointsPerMarker = markerEvery / secondsPerPoint
@@ -372,15 +376,16 @@ private struct DetailWaveView: View {
             let pt = Double(k) * pointsPerMarker
             guard pt / n <= filledFraction else { continue }
 
-            let x        = CGFloat(pt) * pw - offset
-            let wallTime = bufferStart.addingTimeInterval(pt * secondsPerPoint)
+            let x          = CGFloat(pt) * pw - offset
+            let filledPt   = filledFraction * n
+            let offsetSecs = Int((pt - filledPt) * secondsPerPoint)  // negative or zero
 
             ctx.fill(
                 Path(CGRect(x: x - 0.5, y: h - 18, width: 1, height: 5)),
                 with: .color(.gray.opacity(0.5))
             )
             ctx.draw(
-                Text(formatWallTime(wallTime))
+                Text(formatOffset(offsetSecs))
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.gray),
                 at: CGPoint(x: x, y: h - 8),
@@ -389,14 +394,13 @@ private struct DetailWaveView: View {
         }
     }
 
-    private static let wallTimeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss"
-        return f
-    }()
-
-    private func formatWallTime(_ date: Date) -> String {
-        Self.wallTimeFormatter.string(from: date)
+    private func formatOffset(_ seconds: Int) -> String {
+        let abs = Swift.abs(seconds)
+        let h = abs / 3600
+        let m = (abs % 3600) / 60
+        let s = abs % 60
+        let sign = seconds < 0 ? "-" : ""
+        return String(format: "%@%02d:%02d:%02d", sign, h, m, s)
     }
 }
 
@@ -407,7 +411,9 @@ private struct OverviewWaveView: View {
     let filledFraction: Double
     let playheadFraction: Double
     var selection: WaveformSelection?
-    var onSeek: (Double) -> Void
+    var onScrub: (Double) -> Void
+    var onScrubEnd: (Double) -> Void
+    var onSeekTap: ((Double) -> Void)?
 
     private let green    = Color(red: 0.20, green: 0.85, blue: 0.55)
     private let greenDim = Color(red: 0.12, green: 0.40, blue: 0.28)
@@ -419,12 +425,23 @@ private struct OverviewWaveView: View {
             }
             .contentShape(Rectangle())
             .gesture(
-                // onChanged fires continuously during drag and once on tap (minimumDistance: 0),
-                // so onEnded is not needed and would only cause a duplicate seek call.
                 DragGesture(minimumDistance: 0)
                     .onChanged { v in
+                        let isTap = v.translation.width.magnitude < 6 && v.translation.height.magnitude < 6
+                        if !isTap {
+                            let f = Double(v.location.x / geo.size.width)
+                            onScrub(max(0, min(filledFraction, f)))
+                        }
+                    }
+                    .onEnded { v in
+                        let isTap = v.translation.width.magnitude < 6 && v.translation.height.magnitude < 6
                         let f = Double(v.location.x / geo.size.width)
-                        onSeek(max(0, min(filledFraction, f)))
+                        let clamped = max(0, min(filledFraction, f))
+                        if isTap {
+                            if let onSeekTap { onSeekTap(clamped) } else { onScrub(clamped); onScrubEnd(clamped) }
+                        } else {
+                            onScrubEnd(clamped)
+                        }
                     }
             )
         }

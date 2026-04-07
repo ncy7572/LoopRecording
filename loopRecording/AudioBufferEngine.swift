@@ -341,8 +341,14 @@ final class AudioBufferEngine: ObservableObject {
         playheadSeconds = newSec
         isLive = false
         if wasPlaying || hadRecording {
-            // Was playing → continue; was recording → play from here, restore on finish
-            startPlayback(fromSeconds: newSec)
+            if newSec >= filledSeconds {
+                // Skipped to the live edge — treat as playback reaching the end.
+                stopPlayback()
+                onPlaybackComplete()
+            } else {
+                // Was playing → continue; was recording → play from here, restore on finish
+                startPlayback(fromSeconds: newSec)
+            }
         }
         // Was paused → stay paused at the new position (prePlaybackSnapshot is nil, nothing to restore)
     }
@@ -386,10 +392,21 @@ final class AudioBufferEngine: ObservableObject {
         playheadSeconds = clamped
         isLive = false
         if shouldPlay {
-            startPlayback(fromSeconds: clamped)
+            if clamped >= filledSeconds {
+                // Dragged to the live edge while playing — treat as playback reaching the end.
+                stopPlayback()
+                onPlaybackComplete()
+            } else {
+                startPlayback(fromSeconds: clamped)
+            }
         } else if prePlaybackSnapshot != nil {
-            // Recording was interrupted for this scrub — restore it at the live edge.
-            restoreRecordingState()
+            if clamped < filledSeconds {
+                // User dragged back while recording — enter playback from the scrubbed position.
+                startPlayback(fromSeconds: clamped)
+            } else {
+                // Scrub ended at the live edge — restore recording.
+                restoreRecordingState()
+            }
         }
         // Was already paused → stay paused at the scrubbed position.
     }
@@ -398,6 +415,7 @@ final class AudioBufferEngine: ObservableObject {
     // Recording stops permanently (no restore on playback end).
     func enterSelectionMode() {
         stopPlayback()
+        playbackGeneration += 1     // invalidate any pending buffer-completion callback
         prePlaybackSnapshot = nil   // discard any pending restore
         triggerState?.isEnabled = false  // stop the audio thread from re-triggering
         triggerState?.isWaiting = false
@@ -804,11 +822,12 @@ final class AudioBufferEngine: ObservableObject {
             let wf = r.waveformSnapshot()
             let filled = Double(r.filledSampleCount) / sr
             DispatchQueue.main.async { [weak self] in
-                self?.waveformData = wf
-                self?.filledSeconds = filled
-                self?.inputLevelDB = db
-                if self?.isLive == true {
-                    self?.playheadSeconds = filled
+                guard let self else { return }
+                self.waveformData = wf
+                self.filledSeconds = filled
+                self.inputLevelDB = db
+                if self.isLive {
+                    self.playheadSeconds = filled
                 }
             }
 
