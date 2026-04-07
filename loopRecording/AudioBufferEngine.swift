@@ -246,6 +246,7 @@ final class AudioBufferEngine: ObservableObject {
     private static let trigThresholdKey    = "loopRecording.trigThresholdDB"
     private static let trigSilenceKey      = "loopRecording.trigSilenceDuration"
     private static let trigPreRollKey      = "loopRecording.trigPreRoll"
+    private static let longPressKey        = "loopRecording.longPressToSelect"
 
     // MARK: Published state (main thread)
     @Published var waveformData: [Float] = Array(repeating: 0, count: waveformPoints)
@@ -267,6 +268,7 @@ final class AudioBufferEngine: ObservableObject {
     @Published var inputLevelDB: Double = -160
     @Published var waveformSelection: WaveformSelection? = nil
     @Published var engineError: String? = nil
+    @Published var longPressToSelect: Bool
 
     // MARK: Private
     private var playbackClipEndSeconds: Double? = nil
@@ -289,12 +291,14 @@ final class AudioBufferEngine: ObservableObject {
             Self.trigEnabledKey:   false,
             Self.trigThresholdKey: -40.0,
             Self.trigSilenceKey:   10.0,
-            Self.trigPreRollKey:   1.0
+            Self.trigPreRollKey:   1.0,
+            Self.longPressKey:     false
         ])
         triggeredRecording       = ud.bool(forKey: Self.trigEnabledKey)
         triggerThresholdDB       = ud.double(forKey: Self.trigThresholdKey)
         triggerSilenceDuration   = ud.double(forKey: Self.trigSilenceKey)
         triggerPreRollSeconds    = ud.double(forKey: Self.trigPreRollKey)
+        longPressToSelect        = ud.bool(forKey: Self.longPressKey)
     }
 
     private var playbackStartWall: Date?
@@ -608,6 +612,11 @@ final class AudioBufferEngine: ObservableObject {
         triggerPreRollSeconds = seconds
         UserDefaults.standard.set(seconds, forKey: Self.trigPreRollKey)
         updateTriggerState()
+    }
+
+    func setLongPressToSelect(_ enabled: Bool) {
+        longPressToSelect = enabled
+        UserDefaults.standard.set(enabled, forKey: Self.longPressKey)
     }
 
     func applyBufferDuration(_ seconds: Double) {

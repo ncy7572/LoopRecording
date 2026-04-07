@@ -151,6 +151,7 @@ struct ContentView: View {
                 totalSeconds: engine.maxSeconds,
                 isLive: engine.isLive,
                 selection: engine.waveformSelection,
+                longPressEnabled: engine.longPressToSelect,
 
                 onScrub: { f in engine.waveformScrubbing(fraction: f) },
                 onScrubEnd: { f in engine.waveformScrubEnded(fraction: f) },

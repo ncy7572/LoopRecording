@@ -21,6 +21,7 @@ struct SettingsView: View {
                 triggeredRecordingSection
                 bufferDurationSection
                 inputDeviceSection
+                gesturesSection
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -229,6 +230,23 @@ struct SettingsView: View {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - Gestures
+
+    private var gesturesSection: some View {
+        Section {
+            Toggle(isOn: Binding(
+                get: { engine.longPressToSelect },
+                set: { engine.setLongPressToSelect($0) }
+            )) {
+                Label("Long Press to Select", systemImage: "hand.tap")
+            }
+        } header: {
+            Text("Gestures")
+        } footer: {
+            Text("Long-press the waveform to enter selection mode and mark a region for export.")
         }
     }
 
