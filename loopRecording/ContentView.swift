@@ -152,6 +152,7 @@ struct ContentView: View {
                 isLive: engine.isLive,
                 selection: engine.waveformSelection,
 
+                clipModeEnabled: engine.clipModeEnabled,
                 onScrub: { f in engine.waveformScrubbing(fraction: f) },
                 onScrubEnd: { f in engine.waveformScrubEnded(fraction: f) },
                 onSeekTap: { f in engine.waveformTapped(fraction: f) },

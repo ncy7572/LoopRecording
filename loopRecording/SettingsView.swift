@@ -18,6 +18,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                clipModeSection
                 triggeredRecordingSection
                 bufferDurationSection
                 inputDeviceSection
@@ -56,6 +57,23 @@ struct SettingsView: View {
             }
         } message: {
             Text("Changing the buffer duration will restart the audio engine and clear the current buffer.")
+        }
+    }
+
+    // MARK: - Clip Mode
+
+    private var clipModeSection: some View {
+        Section {
+            Toggle(isOn: Binding(
+                get: { engine.clipModeEnabled },
+                set: { engine.setClipModeEnabled($0) }
+            )) {
+                Label("Clip Mode", systemImage: "scissors")
+            }
+        } header: {
+            Text("Clip Mode")
+        } footer: {
+            Text("When enabled, long-pressing the waveform enters clip mode so you can select and export a portion of the recording.")
         }
     }
 

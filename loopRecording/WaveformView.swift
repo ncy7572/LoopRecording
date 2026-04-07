@@ -9,6 +9,7 @@ struct WaveformView: View {
     let totalSeconds: Double
     let isLive: Bool
     var selection: WaveformSelection?
+    var clipModeEnabled: Bool = false
 
     var onScrub: (Double) -> Void
     var onScrubEnd: (Double) -> Void
@@ -27,6 +28,7 @@ struct WaveformView: View {
                 totalSeconds: totalSeconds,
                 isLive: isLive,
                 selection: selection,
+                clipModeEnabled: clipModeEnabled,
                 onScrub: onScrub,
                 onScrubEnd: onScrubEnd,
                 onSeekTap: onSeekTap,
@@ -62,6 +64,7 @@ private struct DetailWaveView: View {
     let totalSeconds: Double
     let isLive: Bool
     var selection: WaveformSelection?
+    var clipModeEnabled: Bool = false
     var onScrub: (Double) -> Void
     var onScrubEnd: (Double) -> Void
     var onSeekTap: ((Double) -> Void)?
@@ -120,7 +123,9 @@ private struct DetailWaveView: View {
             }
             .contentShape(Rectangle())
             // Long press: enter selection mode if not active, or cancel selection if active.
+            // Only fires when Clip Mode is enabled in Settings.
             .onLongPressGesture(minimumDuration: 0.4, maximumDistance: 25) {
+                guard clipModeEnabled else { return }
                 longPressConsumed = true
                 if selectionModeActive {
                     // Cancel — clear selection and exit selection mode

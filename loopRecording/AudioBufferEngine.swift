@@ -246,6 +246,7 @@ final class AudioBufferEngine: ObservableObject {
     private static let trigThresholdKey    = "loopRecording.trigThresholdDB"
     private static let trigSilenceKey      = "loopRecording.trigSilenceDuration"
     private static let trigPreRollKey      = "loopRecording.trigPreRoll"
+    private static let clipModeEnabledKey  = "loopRecording.clipModeEnabled"
 
     // MARK: Published state (main thread)
     @Published var waveformData: [Float] = Array(repeating: 0, count: waveformPoints)
@@ -267,6 +268,7 @@ final class AudioBufferEngine: ObservableObject {
     @Published var inputLevelDB: Double = -160
     @Published var waveformSelection: WaveformSelection? = nil
     @Published var engineError: String? = nil
+    @Published var clipModeEnabled: Bool
 
     // MARK: Private
     private var playbackClipEndSeconds: Double? = nil
@@ -286,15 +288,17 @@ final class AudioBufferEngine: ObservableObject {
         maxSeconds = saved >= 60 ? saved : 300
 
         ud.register(defaults: [
-            Self.trigEnabledKey:   false,
-            Self.trigThresholdKey: -40.0,
-            Self.trigSilenceKey:   10.0,
-            Self.trigPreRollKey:   1.0
+            Self.trigEnabledKey:      false,
+            Self.trigThresholdKey:    -40.0,
+            Self.trigSilenceKey:      10.0,
+            Self.trigPreRollKey:      1.0,
+            Self.clipModeEnabledKey:  false
         ])
         triggeredRecording       = ud.bool(forKey: Self.trigEnabledKey)
         triggerThresholdDB       = ud.double(forKey: Self.trigThresholdKey)
         triggerSilenceDuration   = ud.double(forKey: Self.trigSilenceKey)
         triggerPreRollSeconds    = ud.double(forKey: Self.trigPreRollKey)
+        clipModeEnabled          = ud.bool(forKey: Self.clipModeEnabledKey)
     }
 
     private var playbackStartWall: Date?
@@ -626,6 +630,11 @@ final class AudioBufferEngine: ObservableObject {
         triggerPreRollSeconds = seconds
         UserDefaults.standard.set(seconds, forKey: Self.trigPreRollKey)
         updateTriggerState()
+    }
+
+    func setClipModeEnabled(_ enabled: Bool) {
+        clipModeEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: Self.clipModeEnabledKey)
     }
 
     func applyBufferDuration(_ seconds: Double) {
