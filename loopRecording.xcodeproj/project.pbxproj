@@ -7,11 +7,11 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		31C40A752F7CEB0B000F6449 /* Rehear.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Rehear.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		31C40A752F7CEB0B000F6449 /* Rehear.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = Rehear.app; path = loopRecording.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		31C40A772F7CEB0B000F6449 /* Rehear */ = {
+		31C40A772F7CEB0B000F6449 /* loopRecording */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = loopRecording;
 			sourceTree = "<group>";
@@ -32,7 +32,7 @@
 		31C40A6C2F7CEB0B000F6449 = {
 			isa = PBXGroup;
 			children = (
-				31C40A772F7CEB0B000F6449 /* Rehear */,
+				31C40A772F7CEB0B000F6449 /* loopRecording */,
 				31C40A762F7CEB0B000F6449 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -48,9 +48,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		31C40A742F7CEB0B000F6449 /* Rehear */ = {
+		31C40A742F7CEB0B000F6449 /* loopRecording */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 31C40A802F7CEB0C000F6449 /* Build configuration list for PBXNativeTarget "Rehear" */;
+			buildConfigurationList = 31C40A802F7CEB0C000F6449 /* Build configuration list for PBXNativeTarget "loopRecording" */;
 			buildPhases = (
 				31C40A712F7CEB0B000F6449 /* Sources */,
 				31C40A722F7CEB0B000F6449 /* Frameworks */,
@@ -61,7 +61,7 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				31C40A772F7CEB0B000F6449 /* Rehear */,
+				31C40A772F7CEB0B000F6449 /* loopRecording */,
 			);
 			name = loopRecording;
 			packageProductDependencies = (
@@ -85,7 +85,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 31C40A702F7CEB0B000F6449 /* Build configuration list for PBXProject "Rehear" */;
+			buildConfigurationList = 31C40A702F7CEB0B000F6449 /* Build configuration list for PBXProject "loopRecording" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -99,7 +99,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				31C40A742F7CEB0B000F6449 /* Rehear */,
+				31C40A742F7CEB0B000F6449 /* loopRecording */,
 			);
 		};
 /* End PBXProject section */
@@ -317,7 +317,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		31C40A702F7CEB0B000F6449 /* Build configuration list for PBXProject "Rehear" */ = {
+		31C40A702F7CEB0B000F6449 /* Build configuration list for PBXProject "loopRecording" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				31C40A7E2F7CEB0C000F6449 /* Debug */,
@@ -326,7 +326,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		31C40A802F7CEB0C000F6449 /* Build configuration list for PBXNativeTarget "Rehear" */ = {
+		31C40A802F7CEB0C000F6449 /* Build configuration list for PBXNativeTarget "loopRecording" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				31C40A812F7CEB0C000F6449 /* Debug */,

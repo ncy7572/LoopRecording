@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 
 // Wraps UIActivityViewController for the share sheet.
+// TODO: Change this to ShareLink
 private struct ShareSheet: UIViewControllerRepresentable {
     let url: URL
     func makeUIViewController(context: Context) -> UIActivityViewController {
@@ -12,37 +13,43 @@ private struct ShareSheet: UIViewControllerRepresentable {
 
 struct ContentView: View {
     @StateObject private var engine = AudioBufferEngine()
+    
+    // Settings panel
     @State private var showSettings = false
+    // Exporting panel
     @State private var isExporting = false
     @State private var exportURL: URL? = nil
     @State private var exportError: String? = nil
-    @State private var isExportingClip = false
-    @State private var selectionModeActive = false
 
     // MARK: - UI State
 
     private var hasRecording: Bool { engine.filledSeconds > 0 }
 
     // Button availability
+    private var playEnabled: Bool    { hasRecording && !engine.isRecording && !engine.isAtLiveEdge }
     private var rewindEnabled: Bool  { hasRecording && engine.playheadSeconds > 0 }
-    private var playEnabled: Bool    { hasRecording && !engine.isRecording && !(engine.isLive && !engine.isPlaying) }
-    private var forwardEnabled: Bool { hasRecording && !engine.isRecording && !engine.isLive }
+    private var forwardEnabled: Bool { hasRecording && engine.playheadSeconds < engine.filledSeconds }
     private var exportEnabled: Bool  { hasRecording && !isExporting }
 
     // Status badge
     private var statusLabel: String {
-        if engine.isRecording       { return "LIVE" }
-        if engine.isWaitingForSound { return "WAITING" }
-        if engine.isPlaying         { return "PLAYING" }
-        if hasRecording             { return "PAUSED" }
-        return "READY"
+        switch engine.state {
+        case .ready: return "READY"
+        case .recording: return "RECORDING"
+        case .playing: return "PLAYING"
+        case .paused: return "PAUSED"
+        }
     }
 
     private var statusColor: Color {
-        if engine.isRecording       { return Color(red: 1, green: 0.35, blue: 0.35) }
-        if engine.isWaitingForSound { return Color(red: 1, green: 0.75, blue: 0.0) }  // amber
-        if engine.isPlaying         { return .green }
-        return .gray // when paused
+        switch engine.state {
+        case .recording:
+            return Color(red: 1, green: 0.35, blue: 0.35)
+        case .playing:
+            return .green
+        case .ready, .paused:
+            return .gray
+        }
     }
 
     var body: some View {
@@ -143,96 +150,19 @@ struct ContentView: View {
     // MARK: - Waveform
 
     private var waveformSection: some View {
-        VStack(spacing: 0) {
-            WaveformView(
-                amplitudes: engine.waveformData,
-                filledFraction: engine.filledSeconds / engine.maxSeconds,
-                playheadFraction: engine.playheadSeconds / engine.maxSeconds,
-                totalSeconds: engine.maxSeconds,
-                isLive: engine.isLive,
-                selection: engine.waveformSelection,
-
-                clipModeEnabled: engine.clipModeEnabled,
-                onScrub: { f in engine.waveformScrubbing(fraction: f) },
-                onScrubEnd: { f in engine.waveformScrubEnded(fraction: f) },
-                onSeekTap: { f in engine.waveformTapped(fraction: f) },
-                onSelectionStarted: { engine.enterSelectionMode(); selectionModeActive = true },
-                onSelectionChanged: { s, e in engine.setSelection(startFraction: s, endFraction: e) },
-                onSelectionCleared: { engine.clearSelection(); selectionModeActive = false  }
-            )
-            // detail + 1pt divider + 36pt overview
-            .frame(height: 180)
-            .background(Color(white: 0.05))
-
-            // Space for clip-mode controls is always reserved so the rest of the
-            // layout never shifts when selection mode is entered or a selection is made.
-            // Visibility is controlled with opacity rather than conditional rendering.
-            selectionHint
-                .opacity(selectionModeActive ? 1 : 0)
-
-            selectionControls
-                .opacity(selectionModeActive && engine.waveformSelection != nil ? 1 : 0)
-        }
-    }
-
-    private var selectionHint: some View {
-        HStack(spacing: 12) {
-            Label("Drag to select", systemImage: "hand.draw")
-            Text("·").foregroundStyle(Color(white: 0.3))
-            Label("Hold to cancel", systemImage: "hand.tap")
-        }
-        .font(.system(size: 11))
-        .foregroundStyle(Color(white: 0.45))
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
-        .background(Color(white: 0.08))
-    }
-
-    private var selectionControls: some View {
-        HStack(spacing: 0) {
-            // Play clip
-            Button {
-                engine.playSelection()
-            } label: {
-                Label("Play Clip", systemImage: "play.fill")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-            }
-            .accessibilityLabel("Play selected clip")
-
-            Divider().frame(height: 28).background(Color(white: 0.25))
-
-            // Export clip
-            Button {
-                isExportingClip = true
-                Task {
-                    do {
-                        exportURL = try await engine.exportSelectionWAV()
-                    } catch {
-                        exportError = error.localizedDescription
-                    }
-                    isExportingClip = false
-                }
-            } label: {
-                Group {
-                    if isExportingClip {
-                        ProgressView().tint(.white)
-                    } else {
-                        Label("Export Clip", systemImage: "square.and.arrow.up")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.white)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-            }
-            .disabled(isExportingClip)
-            .accessibilityLabel(isExportingClip ? "Exporting clip" : "Export selected clip")
-
-        }
-        .background(Color(white: 0.1))
+        WaveformView(
+            amplitudes: engine.waveformData,
+            filledFraction: engine.filledSeconds / engine.maxSeconds,
+            playheadFraction: engine.playheadSeconds / engine.maxSeconds,
+            totalSeconds: engine.maxSeconds,
+            isAtLiveEdge: engine.isAtLiveEdge,
+            onScrub: { f in engine.waveformScrubbing(fraction: f) },
+            onScrubEnd: { f in engine.waveformScrubEnded(fraction: f) },
+            onSeekTap: { f in engine.waveformTapped(fraction: f) }
+        )
+        // detail + 1pt divider + 36pt overview
+        .frame(height: 180)
+        .background(Color(white: 0.05))
     }
 
     // MARK: - Time Display
@@ -241,7 +171,7 @@ struct ContentView: View {
         VStack(spacing: 4) {
             // Big display: offset when scrubbed back, empty when at live edge
             Group {
-                if !engine.isLive && hasRecording {
+                if !engine.isAtLiveEdge && hasRecording {
                     Text(formatOffset(engine.filledSeconds - engine.playheadSeconds))
                         .font(.system(size: 52, weight: .thin, design: .monospaced))
                         .foregroundColor(.white)
@@ -313,7 +243,6 @@ struct ContentView: View {
             // Record toggle
             Button {
                 engine.toggleRecording()
-                selectionModeActive = false
             } label: {
                 VStack(spacing: 3) {
                     Image(systemName: engine.isRecording ? "record.circle.fill" : "record.circle")
@@ -321,12 +250,6 @@ struct ContentView: View {
                         .foregroundColor(engine.isRecording
                                          ? Color(red: 1, green: 0.35, blue: 0.35)
                                          : Color.gray)
-                    Text(engine.isRecording ? "LIVE" : "REC")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(engine.isRecording
-                                         ? Color(red: 1, green: 0.35, blue: 0.35)
-                                         : Color.gray)
-                        .kerning(1)
                 }
             }
             .accessibilityLabel(engine.isRecording ? "Stop recording" : "Start recording")

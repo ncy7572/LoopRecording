@@ -18,8 +18,6 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
-                clipModeSection
-                triggeredRecordingSection
                 bufferDurationSection
                 inputDeviceSection
             }
@@ -58,126 +56,6 @@ struct SettingsView: View {
         } message: {
             Text("Changing the buffer duration will restart the audio engine and clear the current buffer.")
         }
-    }
-
-    // MARK: - Clip Mode
-
-    private var clipModeSection: some View {
-        Section {
-            Toggle(isOn: Binding(
-                get: { engine.clipModeEnabled },
-                set: { engine.setClipModeEnabled($0) }
-            )) {
-                Label("Clip Mode", systemImage: "scissors")
-            }
-        } header: {
-            Text("Clip Mode")
-        } footer: {
-            Text("When enabled, long-pressing the waveform enters clip mode so you can select and export a portion of the recording.")
-        }
-    }
-
-    // MARK: - Triggered Recording
-
-    private var levelFraction: Double {
-        max(0, min(1, (engine.inputLevelDB - (-60)) / 60))
-    }
-
-    private var levelColor: Color {
-        let db = engine.inputLevelDB
-        let thr = engine.triggerThresholdDB
-        if db < thr - 6  { return .green }
-        if db < thr + 3  { return Color(red: 1, green: 0.75, blue: 0) }
-        return Color(red: 1, green: 0.35, blue: 0.35)
-    }
-
-    private var inputLevelRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Input Level")
-                Spacer()
-                Text(engine.inputLevelDB <= -159
-                     ? "– dB"
-                     : String(format: "%.0f dB", engine.inputLevelDB))
-                    .monospacedDigit()
-                    .foregroundStyle(engine.inputLevelDB <= -159 ? .secondary : levelColor)
-            }
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(Color.white.opacity(0.1))
-                        .frame(height: 6)
-                    Capsule()
-                        .fill(levelColor)
-                        .frame(width: geo.size.width * levelFraction, height: 6)
-                }
-            }
-            .frame(height: 6)
-        }
-        .padding(.vertical, 4)
-    }
-
-    private var triggeredRecordingSection: some View {
-        Section {
-            Toggle(isOn: Binding(
-                get: { engine.triggeredRecording },
-                set: { engine.setTriggerEnabled($0) }
-            )) {
-                Label("Triggered Recording", systemImage: "waveform.badge.mic")
-            }
-
-            inputLevelRow
-
-            if engine.triggeredRecording {
-                settingRow(
-                    label: "Silence Threshold",
-                    value: String(format: "%.0f dB", engine.triggerThresholdDB)
-                ) {
-                    Slider(value: Binding(
-                        get: { engine.triggerThresholdDB },
-                        set: { engine.setTriggerThresholdDB($0) }
-                    ), in: -60 ... -10, step: 1)
-                }
-
-                settingRow(
-                    label: "Stop After",
-                    value: String(format: "%.1f s", engine.triggerSilenceDuration)
-                ) {
-                    Slider(value: Binding(
-                        get: { engine.triggerSilenceDuration },
-                        set: { engine.setTriggerSilenceDuration($0) }
-                    ), in: 1.0 ... 60.0, step: 0.5)
-                }
-
-                settingRow(
-                    label: "Pre-roll",
-                    value: String(format: "%.1f s", engine.triggerPreRollSeconds)
-                ) {
-                    Slider(value: Binding(
-                        get: { engine.triggerPreRollSeconds },
-                        set: { engine.setTriggerPreRoll($0) }
-                    ), in: 0.0 ... 3.0, step: 0.5)
-                }
-            }
-        } header: {
-            Text("Triggered Recording")
-        } footer: {
-            Text("Pauses recording after sustained silence and resumes on the next sound. Pre-roll rewinds the buffer slightly so the first note is never clipped.")
-        }
-    }
-
-    private func settingRow<S: View>(label: String, value: String, @ViewBuilder slider: () -> S) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(label)
-                Spacer()
-                Text(value)
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-            }
-            slider()
-        }
-        .padding(.vertical, 4)
     }
 
     // MARK: - Buffer Duration

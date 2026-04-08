@@ -2,6 +2,14 @@ import AVFoundation
 import UIKit
 import os.log
 
+
+enum EngineState {
+    case ready
+    case recording
+    case playing
+    case paused
+}
+
 // MARK: - Ring Buffer (non-actor-isolated, accessed from both audio thread and main thread)
 
 final class RingBuffer: @unchecked Sendable {
@@ -120,106 +128,6 @@ final class RingBuffer: @unchecked Sendable {
     }
 }
 
-// MARK: - Pre-roll Buffer (audio-thread write, main-thread never touches internals)
-
-final class PreRollBuffer: @unchecked Sendable {
-    private var buf: [Float]
-    private let capacity: Int
-    private var head: Int = 0
-    private var total: Int = 0
-
-    init(capacity: Int) {
-        self.capacity = max(1, capacity)
-        self.buf = [Float](repeating: 0, count: max(1, capacity))
-    }
-
-    // Mix down to mono and append — audio thread only
-    func write(buffer: AVAudioPCMBuffer) {
-        guard let ch = buffer.floatChannelData else { return }
-        let frames = Int(buffer.frameLength)
-        let numCh  = Int(buffer.format.channelCount)
-        for i in 0..<frames {
-            var mono: Float = 0
-            for c in 0..<numCh { mono += ch[c][i] }
-            buf[head] = mono / Float(numCh)
-            head = (head + 1) % capacity
-            total += 1
-        }
-    }
-
-    // Return the last `count` samples in chronological order — audio thread only
-    func extractLast(count: Int) -> [Float] {
-        let n = min(count, min(total, capacity))
-        guard n > 0 else { return [] }
-        var result = [Float](repeating: 0, count: n)
-        let start = (head - n + capacity) % capacity
-        for i in 0..<n { result[i] = buf[(start + i) % capacity] }
-        return result
-    }
-}
-
-// MARK: - Trigger State (@unchecked Sendable — main thread sets config, audio thread tracks counters)
-
-final class TriggerState: @unchecked Sendable {
-    // Config — protected by a lock; written from main thread, read from audio thread.
-    // os_unfair_lock (via OSAllocatedUnfairLock) is safe for brief critical sections on
-    // the audio thread because it never sleeps and has no priority-inversion risk when
-    // contention (settings changes) is rare.
-    private let configLock = OSAllocatedUnfairLock()
-    private var _isEnabled: Bool   = false
-    private var _threshold: Float  = 0.01
-    private var _maxSilenceSamples: Int = 0
-    private var _preRollSamples: Int    = 0
-
-    var isEnabled: Bool {
-        get { configLock.withLockUnchecked { _isEnabled } }
-        set { configLock.withLockUnchecked { _isEnabled = newValue } }
-    }
-
-    // Atomically updates all four config fields in one lock acquisition.
-    func updateConfig(isEnabled: Bool, threshold: Float,
-                      maxSilenceSamples: Int, preRollSamples: Int) {
-        configLock.withLockUnchecked {
-            _isEnabled        = isEnabled
-            _threshold        = threshold
-            _maxSilenceSamples = maxSilenceSamples
-            _preRollSamples   = preRollSamples
-        }
-    }
-
-    // Returns a consistent snapshot of all config fields — call once per audio callback.
-    struct Config {
-        let isEnabled: Bool
-        let threshold: Float
-        let maxSilenceSamples: Int
-        let preRollSamples: Int
-    }
-    func snapshotConfig() -> Config {
-        configLock.withLockUnchecked {
-            Config(isEnabled: _isEnabled, threshold: _threshold,
-                   maxSilenceSamples: _maxSilenceSamples, preRollSamples: _preRollSamples)
-        }
-    }
-
-    // Counters — audio thread only; no locking needed.
-    var silenceCount: Int = 0
-    var isWaiting: Bool   = false
-}
-
-// MARK: - Waveform Selection
-
-struct WaveformSelection {
-    var startFraction: Double
-    var endFraction: Double
-
-    /// Always the smaller of the two
-    var normalizedStart: Double { min(startFraction, endFraction) }
-    /// Always the larger of the two
-    var normalizedEnd: Double   { max(startFraction, endFraction) }
-
-    var durationFraction: Double { abs(endFraction - startFraction) }
-}
-
 // MARK: - Export Error
 
 enum ExportError: LocalizedError {
@@ -242,36 +150,23 @@ final class AudioBufferEngine: ObservableObject {
 
     static let waveformPoints: Int = 2000
     private static let durationKey         = "loopRecording.bufferDuration"
-    private static let trigEnabledKey      = "loopRecording.trigEnabled"
-    private static let trigThresholdKey    = "loopRecording.trigThresholdDB"
-    private static let trigSilenceKey      = "loopRecording.trigSilenceDuration"
-    private static let trigPreRollKey      = "loopRecording.trigPreRoll"
-    private static let clipModeEnabledKey  = "loopRecording.clipModeEnabled"
 
     // MARK: Published state (main thread)
+    @Published var state: EngineState = .ready
+    
     @Published var waveformData: [Float] = Array(repeating: 0, count: waveformPoints)
     @Published var filledSeconds: Double = 0
     @Published var playheadSeconds: Double = 0
     @Published var isPlaying: Bool = false
-    @Published var isLive: Bool = false
+    @Published var isAtLiveEdge: Bool = false
     @Published var isRecording: Bool = false { didSet { updateIdleTimer() } }
     @Published var permissionDenied: Bool = false
     @Published var availableInputs: [AVAudioSessionPortDescription] = []
     @Published var currentInput: AVAudioSessionPortDescription? = nil
     @Published var maxSeconds: Double
-    // Triggered recording
-    @Published var triggeredRecording: Bool
-    @Published var triggerThresholdDB: Double
-    @Published var triggerSilenceDuration: Double
-    @Published var triggerPreRollSeconds: Double
-    @Published var isWaitingForSound: Bool = false { didSet { updateIdleTimer() } }
-    @Published var inputLevelDB: Double = -160
-    @Published var waveformSelection: WaveformSelection? = nil
     @Published var engineError: String? = nil
-    @Published var clipModeEnabled: Bool
 
     // MARK: Private
-    private var playbackClipEndSeconds: Double? = nil
     private let avEngine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
     private var sampleRate: Double = 44100
@@ -288,17 +183,8 @@ final class AudioBufferEngine: ObservableObject {
         maxSeconds = saved >= 60 ? saved : 300
 
         ud.register(defaults: [
-            Self.trigEnabledKey:      false,
-            Self.trigThresholdKey:    -40.0,
-            Self.trigSilenceKey:      10.0,
-            Self.trigPreRollKey:      1.0,
-            Self.clipModeEnabledKey:  false
+            Self.durationKey: 300.0
         ])
-        triggeredRecording       = ud.bool(forKey: Self.trigEnabledKey)
-        triggerThresholdDB       = ud.double(forKey: Self.trigThresholdKey)
-        triggerSilenceDuration   = ud.double(forKey: Self.trigSilenceKey)
-        triggerPreRollSeconds    = ud.double(forKey: Self.trigPreRollKey)
-        clipModeEnabled          = ud.bool(forKey: Self.clipModeEnabledKey)
     }
 
     private var playbackStartWall: Date?
@@ -306,15 +192,9 @@ final class AudioBufferEngine: ObservableObject {
     private var displayTimer: Timer?
     private var playbackGeneration = 0
     private var wasPlayingBeforeScrub = false
-    private var preRollBuffer: PreRollBuffer?
-    private var triggerState: TriggerState?
-
     // State snapshot taken when playback interrupts an active recording session
-    private enum RecordingSnapshot { case recording, waitingForTrigger }
+    private enum RecordingSnapshot { case recording }
     private var prePlaybackSnapshot: RecordingSnapshot? = nil
-
-    // True while playing a selection clip — completion stays put instead of restoring state
-    private var isPlayingClip: Bool = false
 
     // MARK: - Public API
 
@@ -327,6 +207,7 @@ final class AudioBufferEngine: ObservableObject {
                     }
                 } else {
                     self?.permissionDenied = true
+                    self?.state = .ready
                 }
             }
         }
@@ -343,7 +224,7 @@ final class AudioBufferEngine: ObservableObject {
         let hadRecording = prePlaybackSnapshot != nil
         let newSec = max(0, min(filledSeconds, playheadSeconds + delta))
         playheadSeconds = newSec
-        isLive = false
+        isAtLiveEdge = false
         if wasPlaying || hadRecording {
             if newSec >= filledSeconds {
                 // Skipped to the live edge — treat as playback reaching the end.
@@ -367,7 +248,7 @@ final class AudioBufferEngine: ObservableObject {
         let clamped = max(0, min(filledSeconds, fraction * maxSeconds))
         captureRecordingStateIfNeeded()
         playheadSeconds = clamped
-        isLive = false
+        isAtLiveEdge = false
         startPlayback(fromSeconds: clamped)
     }
 
@@ -380,7 +261,7 @@ final class AudioBufferEngine: ObservableObject {
         }
         let clamped = max(0, min(filledSeconds, fraction * maxSeconds))
         playheadSeconds = clamped
-        isLive = false
+        isAtLiveEdge = false
     }
 
     // Called when the user lifts their finger — seeks and optionally resumes playback.
@@ -394,7 +275,7 @@ final class AudioBufferEngine: ObservableObject {
 
         let clamped = max(0, min(filledSeconds, fraction * maxSeconds))
         playheadSeconds = clamped
-        isLive = false
+        isAtLiveEdge = false
         if shouldPlay {
             if clamped >= filledSeconds {
                 // Dragged to the live edge while playing — treat as playback reaching the end.
@@ -413,66 +294,6 @@ final class AudioBufferEngine: ObservableObject {
             }
         }
         // Was already paused → stay paused at the scrubbed position.
-    }
-
-    // Called when the user long-presses to open the selection popup.
-    // Recording stops permanently (no restore on playback end).
-    func enterSelectionMode() {
-        stopPlayback()
-        playbackGeneration += 1     // invalidate any pending buffer-completion callback
-        prePlaybackSnapshot = nil   // discard any pending restore
-        triggerState?.isEnabled = false  // stop the audio thread from re-triggering
-        triggerState?.isWaiting = false
-        triggerState?.silenceCount = 0
-        ring?.isActive = false
-        isRecording = false
-        isWaitingForSound = false
-    }
-
-    // MARK: - Selection API
-
-    func setSelection(startFraction: Double, endFraction: Double) {
-        waveformSelection = WaveformSelection(startFraction: startFraction,
-                                              endFraction: endFraction)
-    }
-
-    func clearSelection() {
-        waveformSelection = nil
-    }
-
-    func playSelection() {
-        guard let sel = waveformSelection else { return }
-        let startSec = sel.normalizedStart * maxSeconds
-        let endSec   = sel.normalizedEnd   * maxSeconds
-        captureRecordingStateIfNeeded()
-        startPlayback(fromSeconds: startSec, toSeconds: endSec)
-    }
-
-    // Exports only the selected region as a WAV file.
-    func exportSelectionWAV() async throws -> URL {
-        guard isEngineStarted, let r = ring, let fmt = monoFormat else { throw ExportError.notReady }
-        guard let sel = waveformSelection else { throw ExportError.empty }
-        let startSec = sel.normalizedStart * maxSeconds
-        let endSec   = sel.normalizedEnd   * maxSeconds
-        // Pause ingestion while copying to reduce the concurrent-write window.
-        let wasActive = r.isActive
-        r.isActive = false
-        let flat = r.copySlice(startSec: startSec, sampleRate: sampleRate, endSec: endSec)
-        r.isActive = wasActive
-        guard let flat else { throw ExportError.empty }
-        return try await Task.detached(priority: .userInitiated) {
-            let stamp = Int(Date().timeIntervalSince1970)
-            let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("loopRecording_clip_\(stamp).wav")
-            let file = try AVAudioFile(forWriting: url, settings: fmt.settings)
-            guard let buf = AVAudioPCMBuffer(pcmFormat: fmt,
-                                              frameCapacity: AVAudioFrameCount(flat.count)),
-                  let dst = buf.floatChannelData?[0] else { throw ExportError.bufferError }
-            buf.frameLength = AVAudioFrameCount(flat.count)
-            flat.withUnsafeBufferPointer { dst.initialize(from: $0.baseAddress!, count: flat.count) }
-            try file.write(from: buf)
-            return url
-        }.value
     }
 
     // Exports the entire filled buffer as a 32-bit float WAV file.
@@ -558,11 +379,11 @@ final class AudioBufferEngine: ObservableObject {
         switch type {
         case .began:
             // Phone call, Siri, alarm, etc. — pause recording
-            if isRecording || isWaitingForSound {
+            if isRecording {
                 wasInterrupted = true
                 ring?.isActive = false
                 isRecording = false
-                isWaitingForSound = false
+                state = filledSeconds > 0 ? .paused : .ready
             }
         case .ended:
             guard wasInterrupted else { return }
@@ -573,7 +394,8 @@ final class AudioBufferEngine: ObservableObject {
                 try? AVAudioSession.sharedInstance().setActive(true)
                 ring?.isActive = true
                 isRecording = true
-                isLive = true
+                isAtLiveEdge = true
+                state = .recording
             }
         @unknown default:
             break
@@ -600,43 +422,6 @@ final class AudioBufferEngine: ObservableObject {
         restartEngine()
     }
 
-    func setTriggerEnabled(_ enabled: Bool) {
-        triggeredRecording = enabled
-        UserDefaults.standard.set(enabled, forKey: Self.trigEnabledKey)
-        if !enabled && isWaitingForSound {
-            // Cancel any active wait and resume recording
-            triggerState?.isWaiting = false
-            triggerState?.silenceCount = 0
-            ring?.isActive = true
-            isWaitingForSound = false
-            isRecording = true
-        }
-        updateTriggerState()
-    }
-
-    func setTriggerThresholdDB(_ db: Double) {
-        triggerThresholdDB = db
-        UserDefaults.standard.set(db, forKey: Self.trigThresholdKey)
-        updateTriggerState()
-    }
-
-    func setTriggerSilenceDuration(_ seconds: Double) {
-        triggerSilenceDuration = seconds
-        UserDefaults.standard.set(seconds, forKey: Self.trigSilenceKey)
-        updateTriggerState()
-    }
-
-    func setTriggerPreRoll(_ seconds: Double) {
-        triggerPreRollSeconds = seconds
-        UserDefaults.standard.set(seconds, forKey: Self.trigPreRollKey)
-        updateTriggerState()
-    }
-
-    func setClipModeEnabled(_ enabled: Bool) {
-        clipModeEnabled = enabled
-        UserDefaults.standard.set(enabled, forKey: Self.clipModeEnabledKey)
-    }
-
     func applyBufferDuration(_ seconds: Double) {
         maxSeconds = seconds
         UserDefaults.standard.set(seconds, forKey: Self.durationKey)
@@ -650,13 +435,11 @@ final class AudioBufferEngine: ObservableObject {
 
         isPlaying = false
         isRecording = false
-        isLive = false
-        isWaitingForSound = false
+        isAtLiveEdge = false
+        state = .ready
         playheadSeconds = 0
         filledSeconds = 0
         waveformData = Array(repeating: 0, count: Self.waveformPoints)
-        preRollBuffer = nil
-        triggerState = nil
         prePlaybackSnapshot = nil
         if let input {
             try? AVAudioSession.sharedInstance().setPreferredInput(input)
@@ -689,62 +472,28 @@ final class AudioBufferEngine: ObservableObject {
             requestPermissionAndStart()
             return
         }
-        if isRecording || isWaitingForSound {
+        if isRecording {
             // User explicitly stopped — discard any playback-restore snapshot
             prePlaybackSnapshot = nil
-            triggerState?.isWaiting = false
-            triggerState?.silenceCount = 0
             ring?.isActive = false
             isRecording = false
-            isWaitingForSound = false
-            // isLive stays true — playhead is still at the end of the buffer
+            state = filledSeconds > 0 ? .paused : .ready
+            // isAtLiveEdge stays true — playhead is still at the end of the buffer
         } else {
             // Resume: jump to the live edge and start ingesting again.
-            // Close any open selection — recording and selection mode are mutually exclusive.
-            waveformSelection = nil
             stopPlayback()
-            updateTriggerState()   // restore trigger enabled/settings after selection mode
-            triggerState?.isWaiting = false
-            triggerState?.silenceCount = 0
             ring?.isActive = true
             isRecording = true
-            isLive = true
-            isWaitingForSound = false
+            isAtLiveEdge = true
             playheadSeconds = filledSeconds
+            state = .recording
         }
     }
 
     // MARK: - Helpers
 
     private func updateIdleTimer() {
-        UIApplication.shared.isIdleTimerDisabled = isRecording || isWaitingForSound
-    }
-
-    // Compute mono RMS from a PCM buffer — called on audio thread, must be nonisolated
-    private static func monoRMS(_ buf: AVAudioPCMBuffer) -> Float {
-        guard let ch = buf.floatChannelData else { return 0 }
-        let frames  = Int(buf.frameLength)
-        let numCh   = Int(buf.format.channelCount)
-        guard frames > 0 else { return 0 }
-        var sumSq: Float = 0
-        for i in 0..<frames {
-            var mono: Float = 0
-            for c in 0..<numCh { mono += ch[c][i] }
-            let m = mono / Float(numCh)
-            sumSq += m * m
-        }
-        return sqrt(sumSq / Float(frames))
-    }
-
-    // Sync TriggerState fields from current published settings + sampleRate
-    private func updateTriggerState() {
-        guard let trig = triggerState else { return }
-        trig.updateConfig(
-            isEnabled:         triggeredRecording,
-            threshold:         Float(pow(10.0, triggerThresholdDB / 20.0)),
-            maxSilenceSamples: Int(triggerSilenceDuration * sampleRate),
-            preRollSamples:    Int(triggerPreRollSeconds  * sampleRate)
-        )
+        UIApplication.shared.isIdleTimerDisabled = isRecording
     }
 
     // MARK: - Setup
@@ -774,59 +523,8 @@ final class AudioBufferEngine: ObservableObject {
         }
         avEngine.connect(playerNode, to: avEngine.mainMixerNode, format: fmt)
 
-        // Pre-roll buffer: capacity = 3 s (hard max for the pre-roll slider)
-        let preRoll = PreRollBuffer(capacity: Int(3.0 * sampleRate))
-        preRollBuffer = preRoll
-
-        // Trigger state — settings propagated via updateTriggerState()
-        let trig = TriggerState()
-        triggerState = trig
-        updateTriggerState()
-
-        // Capture ring, pre-roll and trigger state directly — avoids @MainActor crossing on audio thread
         let sr = sampleRate
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self, r, preRoll, trig] buf, _ in
-            // Always write to pre-roll (even while the main ring is paused)
-            preRoll.write(buffer: buf)
-
-            let rms = AudioBufferEngine.monoRMS(buf)
-            let db  = rms > 0 ? Double(20.0 * log10(rms)) : -160.0
-
-            // Snapshot config once — single lock acquisition for the entire callback.
-            let cfg = trig.snapshotConfig()
-            if cfg.isEnabled {
-                if !trig.isWaiting {
-                    // Recording — watch for sustained silence
-                    if rms < cfg.threshold {
-                        trig.silenceCount += Int(buf.frameLength)
-                        if trig.silenceCount >= cfg.maxSilenceSamples {
-                            r.isActive = false
-                            trig.isWaiting = true
-                            trig.silenceCount = 0
-                            DispatchQueue.main.async { [weak self] in
-                                self?.isWaitingForSound = true
-                                self?.isRecording = false
-                            }
-                        }
-                    } else {
-                        trig.silenceCount = 0
-                    }
-                } else {
-                    // Waiting — watch for sound to resume
-                    if rms >= cfg.threshold {
-                        let pre = preRoll.extractLast(count: cfg.preRollSamples)
-                        r.writeRaw(pre)
-                        r.isActive = true
-                        trig.isWaiting = false
-                        trig.silenceCount = 0
-                        DispatchQueue.main.async { [weak self] in
-                            self?.isWaitingForSound = false
-                            self?.isRecording = true
-                        }
-                    }
-                }
-            }
-
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self, r] buf, _ in
             r.write(buffer: buf)
             let wf = r.waveformSnapshot()
             let filled = Double(r.filledSampleCount) / sr
@@ -834,8 +532,7 @@ final class AudioBufferEngine: ObservableObject {
                 guard let self else { return }
                 self.waveformData = wf
                 self.filledSeconds = filled
-                self.inputLevelDB = db
-                if self.isLive {
+                if self.isAtLiveEdge {
                     self.playheadSeconds = filled
                 }
             }
@@ -846,7 +543,11 @@ final class AudioBufferEngine: ObservableObject {
         try avEngine.start()
         isEngineStarted = true
         isRecording = true
-        isLive = true
+        isAtLiveEdge = true
+        
+        // Engine state changes
+        state = .recording
+        
         refreshInputs()
     }
 
@@ -855,13 +556,12 @@ final class AudioBufferEngine: ObservableObject {
     private func tick() {
         guard isPlaying, let start = playbackStartWall else { return }
         let pos = playbackStartSec + Date().timeIntervalSince(start)
-        let ceiling = playbackClipEndSeconds ?? filledSeconds
-        if pos >= ceiling {
+        if pos >= filledSeconds {
             // Increment generation BEFORE stopPlayback so the buffer completion
             // callback (which checks generation) is invalidated and won't fire
             // onPlaybackComplete a second time.
             playbackGeneration += 1
-            playheadSeconds = ceiling   // pin exactly to the clip/buffer end
+            playheadSeconds = filledSeconds
             stopPlayback()
             onPlaybackComplete()
         } else {
@@ -872,25 +572,24 @@ final class AudioBufferEngine: ObservableObject {
     // MARK: - Playback
 
     private func play() {
-        startPlayback(fromSeconds: isLive ? filledSeconds : playheadSeconds)
+        startPlayback(fromSeconds: isAtLiveEdge ? filledSeconds : playheadSeconds)
     }
 
     private func seekTo(seconds: Double) {
         let clamped = max(0, min(filledSeconds, seconds))
         playheadSeconds = clamped
-        isLive = clamped >= filledSeconds - 0.5
+        isAtLiveEdge = clamped >= filledSeconds - 0.5
         if isPlaying { startPlayback(fromSeconds: clamped) }
     }
 
-    private func startPlayback(fromSeconds seconds: Double, toSeconds: Double? = nil) {
+    private func startPlayback(fromSeconds seconds: Double) {
         guard let fmt = monoFormat, let r = ring else { return }
 
         stopPlayback()
         playbackGeneration += 1
         let gen = playbackGeneration
 
-        guard let flat = r.copySlice(startSec: seconds, sampleRate: sampleRate,
-                                     endSec: toSeconds) else { return }
+        guard let flat = r.copySlice(startSec: seconds, sampleRate: sampleRate) else { return }
 
         guard let pcmBuf = AVAudioPCMBuffer(pcmFormat: fmt,
                                              frameCapacity: AVAudioFrameCount(flat.count)),
@@ -902,8 +601,6 @@ final class AudioBufferEngine: ObservableObject {
 
         playbackStartSec = seconds
         playbackStartWall = Date()
-        playbackClipEndSeconds = toSeconds
-        isPlayingClip = (toSeconds != nil)
 
         playerNode.scheduleBuffer(pcmBuf) { [weak self] in
             DispatchQueue.main.async {
@@ -913,8 +610,11 @@ final class AudioBufferEngine: ObservableObject {
         }
         playerNode.play()
         isPlaying = true
-        isLive = false
-
+        isAtLiveEdge = false
+        
+        // Engine state changes
+        state = .playing
+        
         displayTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             self?.tick()
         }
@@ -926,14 +626,10 @@ final class AudioBufferEngine: ObservableObject {
         guard prePlaybackSnapshot == nil else { return }
         if isRecording {
             prePlaybackSnapshot = .recording
-        } else if isWaitingForSound {
-            prePlaybackSnapshot = .waitingForTrigger
         }
-        triggerState?.isWaiting = false
-        triggerState?.silenceCount = 0
         ring?.isActive = false
         isRecording = false
-        isWaitingForSound = false
+        state = filledSeconds > 0 ? .paused : .ready
     }
 
     // Restore recording state saved by captureRecordingStateIfNeeded.
@@ -943,17 +639,14 @@ final class AudioBufferEngine: ObservableObject {
         case .recording:
             ring?.isActive = true
             isRecording = true
-            isLive = true
+            isAtLiveEdge = true
             playheadSeconds = filledSeconds
-        case .waitingForTrigger:
-            triggerState?.isWaiting = true
-            isWaitingForSound = true
-            isLive = true
-            playheadSeconds = filledSeconds
+            state = .recording
         case nil:
             // Was paused — go to live edge
-            isLive = true
+            isAtLiveEdge = true
             playheadSeconds = filledSeconds
+            state = filledSeconds > 0 ? .paused : .ready
         }
     }
 
@@ -966,27 +659,19 @@ final class AudioBufferEngine: ObservableObject {
         // User explicitly chose to pause — forget any recording state that was
         // captured before playback started. Further seeks must stay paused.
         prePlaybackSnapshot = nil
+        state = filledSeconds > 0 ? .paused : .ready
     }
 
     private func stopPlayback() {
         playerNode.stop()
         isPlaying = false
         playbackStartWall = nil
-        playbackClipEndSeconds = nil
         displayTimer?.invalidate()
         displayTimer = nil
-        // isPlayingClip intentionally NOT cleared here — onPlaybackComplete reads it
     }
 
     private func onPlaybackComplete() {
         isPlaying = false
-        if isPlayingClip {
-            // Clip finished — playhead is already at the clip end (set by the last tick()).
-            // Stay paused there. Recording was permanently stopped when selection mode
-            // was entered, so there is nothing to restore.
-            isPlayingClip = false
-        } else {
-            restoreRecordingState()
-        }
+        restoreRecordingState()
     }
 }
