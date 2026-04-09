@@ -48,15 +48,19 @@ struct WaveformView: View {
 
 private struct DetailWaveView: View {
     let amplitudes: [Float]
+    
     let filledFraction: Double
     let playheadFraction: Double
+    
     let totalSeconds: Double
+    
     let isAtLiveEdge: Bool
+    
     var onScrub: (Double) -> Void
     var onScrubEnd: (Double) -> Void
     var onSeekTap: ((Double) -> Void)?
 
-    private let visibleSeconds: Double = 30
+    private let bucketWidth: CGFloat = 7
 
     @State private var dragBaseFraction: Double? = nil
 
@@ -68,9 +72,7 @@ private struct DetailWaveView: View {
         GeometryReader { geo in
             let w = geo.size.width
             let h = geo.size.height
-            let pw = totalSeconds > 0
-                ? w * CGFloat(totalSeconds) / CGFloat(visibleSeconds * Double(amplitudes.count))
-                : w / 200
+            let pw = bucketWidth
 
             let playheadPt = CGFloat(playheadFraction) * CGFloat(amplitudes.count)
             let contentOffset = playheadPt * pw - w / 2
@@ -166,20 +168,19 @@ private struct DetailWaveView: View {
         let h = size.height
         let w = size.width
         let n = Double(amplitudes.count)
+        let barsPerMarker = 10.0
 
         let secondsPerPoint = totalSeconds / n
-        let markerEvery: Double = 5
-        let pointsPerMarker = markerEvery / secondsPerPoint
 
         let leftPt = Double(offset / pw)
         let rightPt = Double((offset + w) / pw)
-        let firstK = Int(ceil(leftPt / pointsPerMarker))
-        let lastK = Int(floor(rightPt / pointsPerMarker))
-        guard firstK <= lastK else { return }
+        let firstMarker = Int(ceil(leftPt / barsPerMarker)) * Int(barsPerMarker)
+        let lastMarker = Int(floor(rightPt / barsPerMarker)) * Int(barsPerMarker)
+        guard firstMarker <= lastMarker else { return }
 
-        for k in firstK...lastK {
-            guard k >= 0 else { continue }
-            let pt = Double(k) * pointsPerMarker
+        for marker in stride(from: firstMarker, through: lastMarker, by: Int(barsPerMarker)) {
+            guard marker >= 0 else { continue }
+            let pt = Double(marker)
             guard pt / n <= filledFraction else { continue }
 
             let x = CGFloat(pt) * pw - offset
