@@ -5,7 +5,7 @@ struct SettingsView: View {
     @ObservedObject var engine: AudioBufferEngine
     @Environment(\.dismiss) private var dismiss
 
-    // Local slider value — only committed when the user taps Apply
+    // Local slider value — committed after the user finishes dragging and confirms
     @State private var localDuration: Double = 300
 
     // Input device change confirmation
@@ -45,16 +45,16 @@ struct SettingsView: View {
         } message: {
             Text("Changing the input device will restart the audio engine and clear the current buffer.")
         }
-        // Buffer duration change alert
-        .alert("Change Buffer Duration?", isPresented: $showDurationAlert) {
-            Button("Apply", role: .destructive) {
+        // Buffer duration truncation alert
+        .alert("Shorten Buffer and Drop Old Audio?", isPresented: $showDurationAlert) {
+            Button("Truncate", role: .destructive) {
                 engine.applyBufferDuration(localDuration)
             }
             Button("Cancel", role: .cancel) {
                 localDuration = engine.maxSeconds  // revert slider
             }
         } message: {
-            Text("Changing the buffer duration will restart the audio engine and clear the current buffer.")
+            Text("The new buffer length is shorter than the audio you already have, so the oldest audio will be removed.")
         }
     }
 
@@ -71,24 +71,34 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Slider(value: $localDuration, in: 60...3600, step: 30)
+                Slider(
+                    value: $localDuration,
+                    in: AudioBufferEngine.bufferDurationRange,
+                    step: 30,
+                    onEditingChanged: { isEditing in
+                        guard !isEditing else { return }
+                        if Int(localDuration) != Int(engine.maxSeconds) {
+                            if engine.bufferDurationChangeNeedsConfirmation(localDuration) {
+                                showDurationAlert = true
+                            } else {
+                                engine.applyBufferDuration(localDuration)
+                            }
+                        }
+                    }
+                )
 
                 HStack {
-                    Text(formatDuration(60))
+                    Text(formatDuration(AudioBufferEngine.minimumBufferSeconds))
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                     Spacer()
-                    Text(formatDuration(3600))
+                    Text(formatDuration(AudioBufferEngine.maximumBufferSeconds))
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
             }
             .padding(.vertical, 4)
 
-            if Int(localDuration) != Int(engine.maxSeconds) {
-                Button("Apply") { showDurationAlert = true }
-                    .foregroundStyle(.red)
-            }
         } header: {
             Text("Buffer")
         } footer: {
