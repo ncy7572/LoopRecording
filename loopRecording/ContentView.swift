@@ -15,6 +15,8 @@ struct ContentView: View {
     @StateObject private var engine = AudioBufferEngine()
     // Observed so the UI re-renders (re-resolving localized strings) on language change.
     @EnvironmentObject private var language: LanguageManager
+    // Drives the adaptive waveform height (taller on iPad / regular width).
+    @Environment(\.horizontalSizeClass) private var hSizeClass
 
     // Settings panel
     @State private var showSettings = false
@@ -96,6 +98,7 @@ struct ContentView: View {
     // MARK: - Main Layout
 
     private var mainView: some View {
+        GeometryReader { geo in
         VStack(spacing: 0) {
             // Top bar
             HStack {
@@ -143,16 +146,23 @@ struct ContentView: View {
             Spacer()
             timeDisplay
                 .padding(.bottom, 16)
-            waveformSection
+            waveformSection(height: waveformHeight(for: geo.size))
             Spacer()
             transportControls
                 .padding(.bottom, 40)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    /// Waveform fills a chunk of the screen on iPad (regular width); stays compact on iPhone.
+    private func waveformHeight(for size: CGSize) -> CGFloat {
+        hSizeClass == .regular ? min(max(280, size.height * 0.5), 560) : 180
     }
 
     // MARK: - Waveform
 
-    private var waveformSection: some View {
+    private func waveformSection(height: CGFloat) -> some View {
         WaveformView(
             amplitudes: engine.waveformData,
             filledFraction: engine.filledSeconds / engine.maxSeconds,
@@ -163,8 +173,8 @@ struct ContentView: View {
             onScrubEnd: { f in engine.waveformScrubEnded(fraction: f) },
             onSeekTap: { f in engine.waveformTapped(fraction: f) }
         )
-        // detail + 1pt divider + 36pt overview
-        .frame(height: 180)
+        // detail (flexible) + 1pt divider + 36pt overview
+        .frame(height: height)
         .background(Color(white: 0.05))
     }
 
