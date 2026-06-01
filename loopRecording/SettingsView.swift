@@ -118,6 +118,8 @@ struct SettingsView: View {
                     languageLabel(lang).tag(lang)
                 }
             }
+            .pickerStyle(.inline)
+            .labelsHidden()
         } header: {
             Text("Language")
         }

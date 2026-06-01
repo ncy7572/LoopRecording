@@ -17,11 +17,19 @@ enum AppLanguage: String, CaseIterable, Identifiable {
     }
 
     /// Locale that drives SwiftUI `Text` localization and number/date formatting.
+    /// `.system` resolves to a concrete locale (the app's effective system
+    /// language) rather than `.autoupdatingCurrent`, which SwiftUI does not
+    /// reliably use to re-pick the localization when switching back to it.
     var locale: Locale {
         switch self {
-        case .system:  return Locale.autoupdatingCurrent
+        case .system:  return Locale(identifier: AppLanguage.systemLanguageCode)
         case .english, .chinese: return Locale(identifier: rawValue)
         }
+    }
+
+    /// The language code the app would use when following the system setting.
+    static var systemLanguageCode: String {
+        Bundle.main.preferredLocalizations.first ?? "en"
     }
 }
 
@@ -44,8 +52,8 @@ final class LanguageManager: ObservableObject {
     /// The bundle to resolve `String(localized:)` against. Falls back to `.main`
     /// (system resolution) when following the system language.
     var bundle: Bundle {
-        if let code = current.resourceCode,
-           let path = Bundle.main.path(forResource: code, ofType: "lproj"),
+        let code = current.resourceCode ?? AppLanguage.systemLanguageCode
+        if let path = Bundle.main.path(forResource: code, ofType: "lproj"),
            let languageBundle = Bundle(path: path) {
             return languageBundle
         }
