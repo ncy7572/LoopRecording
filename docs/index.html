@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Loop Recording Support</title>
+  <meta name="description" content="Support and privacy policy for Loop Recording.">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f7f7f4;
+      --text: #171717;
+      --muted: #606060;
+      --panel: #ffffff;
+      --border: #d9d9d2;
+      --accent: #0c7a43;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111111;
+        --text: #f2f2ef;
+        --muted: #b5b5ad;
+        --panel: #1b1b1b;
+        --border: #333333;
+        --accent: #43d184;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.6;
+    }
+
+    main {
+      width: min(760px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 56px 0;
+    }
+
+    header {
+      margin-bottom: 32px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(2rem, 5vw, 3.25rem);
+      line-height: 1.05;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 1.35rem;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0 0 14px;
+    }
+
+    a {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .lede {
+      color: var(--muted);
+      font-size: 1.1rem;
+      max-width: 620px;
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 24px;
+      margin: 18px 0;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Loop Recording Support</h1>
+      <p class="lede">Help, contact information, and privacy policy for Loop Recording, a rolling audio recorder for iPhone and iPad.</p>
+    </header>
+
+    <section aria-labelledby="support">
+      <h2 id="support">Support</h2>
+      <p>For questions, bug reports, feature requests, or help using Loop Recording, please contact:</p>
+      <p><a href="mailto:your-email@example.com">your-email@example.com</a></p>
+      <p class="muted">Please replace this email address before publishing the page.</p>
+    </section>
+
+    <section aria-labelledby="about">
+      <h2 id="about">About Loop Recording</h2>
+      <p>Loop Recording keeps a rolling microphone buffer while the app is open, so you can jump back, replay recent audio, and export recordings as WAV files when you choose.</p>
+      <ul>
+        <li>Adjustable rolling buffer duration</li>
+        <li>Live waveform display</li>
+        <li>Playback and 15-second skip controls</li>
+        <li>WAV export through the iOS share sheet</li>
+        <li>Input device selection when supported by iOS</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="privacy">
+      <h2 id="privacy">Privacy Policy</h2>
+      <p>Loop Recording uses microphone access to record audio into a rolling buffer on your device while the app is open.</p>
+      <p>Audio is processed locally on your device. Loop Recording does not upload audio to our servers, does not create user accounts, does not collect personal information, does not use third-party analytics, and does not track users.</p>
+      <p>When you export a recording, the file is shared only through the iOS sharing options that you select.</p>
+      <p class="muted">Last updated: June 1, 2026</p>
+    </section>
+  </main>
+</body>
+</html>
