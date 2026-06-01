@@ -3,6 +3,7 @@ import AVFoundation
 
 struct SettingsView: View {
     @ObservedObject var engine: AudioBufferEngine
+    @EnvironmentObject private var language: LanguageManager
     @Environment(\.dismiss) private var dismiss
 
     // Local slider value — committed after the user finishes dragging and confirms
@@ -20,9 +21,11 @@ struct SettingsView: View {
             List {
                 bufferDurationSection
                 inputDeviceSection
+                languageSection
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
+            .environment(\.locale, language.locale)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
@@ -106,6 +109,29 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Language
+
+    private var languageSection: some View {
+        Section {
+            Picker("Language", selection: $language.current) {
+                ForEach(AppLanguage.allCases) { lang in
+                    languageLabel(lang).tag(lang)
+                }
+            }
+        } header: {
+            Text("Language")
+        }
+    }
+
+    @ViewBuilder
+    private func languageLabel(_ lang: AppLanguage) -> some View {
+        switch lang {
+        case .system:  Text("System")        // localized, follows current language
+        case .english: Text(verbatim: "English")
+        case .chinese: Text(verbatim: "中文")
+        }
+    }
+
     // MARK: - Input Device
 
     private var inputDeviceSection: some View {
@@ -143,7 +169,9 @@ struct SettingsView: View {
     private func formatDuration(_ seconds: Double) -> String {
         let mins = Int(seconds) / 60
         let secs = Int(seconds) % 60
-        return secs == 0 ? "\(mins) min" : "\(mins)m \(secs)s"
+        return secs == 0
+            ? String(format: String(localized: "%lld min", bundle: language.bundle), mins)
+            : String(format: String(localized: "%lldm %llds", bundle: language.bundle), mins, secs)
     }
 
     private func icon(for port: AVAudioSessionPortDescription) -> String {

@@ -147,9 +147,9 @@ enum ExportError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .notReady:      return "Engine not ready — start recording first."
-        case .empty:         return "Nothing recorded yet."
-        case .bufferError:   return "Failed to create audio buffer."
+        case .notReady:      return String(localized: "Engine not ready — start recording first.", bundle: LanguageManager.shared.bundle)
+        case .empty:         return String(localized: "Nothing recorded yet.", bundle: LanguageManager.shared.bundle)
+        case .bufferError:   return String(localized: "Failed to create audio buffer.", bundle: LanguageManager.shared.bundle)
         }
     }
 }
@@ -239,7 +239,7 @@ final class AudioBufferEngine: ObservableObject {
             DispatchQueue.main.async {
                 if granted {
                     do { try self?.start() } catch {
-                        self?.engineError = "Failed to start recording: \(error.localizedDescription)"
+                        self?.engineError = String(localized: "Failed to start recording: \(error.localizedDescription)", bundle: LanguageManager.shared.bundle)
                     }
                 } else {
                     self?.permissionDenied = true
@@ -265,11 +265,11 @@ final class AudioBufferEngine: ObservableObject {
             if newSec >= filledSeconds {
                 // Skipped to the live edge — treat as playback reaching the end.
                 finishPlaybackAndRestore()
-            } else {
-                // Was playing → continue; was recording → play from here, restore on finish
-                if !startPlayback(fromSeconds: newSec), hadRecording {
-                    restoreRecordingState()
-                }
+            } else if !startPlayback(fromSeconds: newSec) {
+                // Too close to the live edge to play — treat as reaching the end
+                // so playback stops and recording (if any) is restored, rather
+                // than leaving the old player running from its previous position.
+                finishPlaybackAndRestore()
             }
         }
         // Was paused → stay paused at the new position (prePlaybackSnapshot is nil, nothing to restore)
@@ -486,11 +486,17 @@ final class AudioBufferEngine: ObservableObject {
         guard isEngineStarted, let r = ring else { return }
 
         let wasPlaying = isPlaying
-        let wasRecording = isRecording
+        // Recording should resume if it's active now, or was suspended to enter
+        // playback (prePlaybackSnapshot). Using isRecording alone loses the latter.
+        let shouldResumeRecording = isRecording || prePlaybackSnapshot == .recording
         let oldFilledSeconds = filledSeconds
         let droppedSeconds = max(0, oldFilledSeconds - targetSeconds)
-        let copyStartSeconds = max(0, oldFilledSeconds - targetSeconds)
-        let preservedAudio = r.copySlice(startSec: copyStartSeconds, sampleRate: sampleRate) ?? []
+        // Pause ingestion while copying so the audio thread isn't writing the
+        // samples we read (mirrors exportWAV), then restore.
+        let wasActive = r.isActive
+        r.isActive = false
+        let preservedAudio = r.copySlice(startSec: droppedSeconds, sampleRate: sampleRate) ?? []
+        r.isActive = wasActive
         let restoredPlayhead = isAtLiveEdge
             ? min(targetSeconds, oldFilledSeconds)
             : max(0, playheadSeconds - droppedSeconds)
@@ -500,17 +506,24 @@ final class AudioBufferEngine: ObservableObject {
         prePlaybackSnapshot = nil
 
         do {
+            // While playback resumes we must not ingest; if recording should
+            // resume, that intent is carried by prePlaybackSnapshot and restored
+            // when playback finishes.
+            let willResumePlayback = wasPlaying && restoredPlayhead < min(targetSeconds, oldFilledSeconds)
             try start(
                 preservedSamples: preservedAudio,
-                startRecording: wasRecording,
+                startRecording: shouldResumeRecording && !willResumePlayback,
                 initialPlayheadSeconds: restoredPlayhead,
                 initialIsAtLiveEdge: restoredIsAtLiveEdge
             )
-            if wasPlaying, restoredPlayhead < filledSeconds {
+            if willResumePlayback {
+                if shouldResumeRecording {
+                    prePlaybackSnapshot = .recording
+                }
                 _ = startPlayback(fromSeconds: restoredPlayhead)
             }
         } catch {
-            engineError = "Failed to change buffer duration: \(error.localizedDescription)"
+            engineError = String(localized: "Failed to change buffer duration: \(error.localizedDescription)", bundle: LanguageManager.shared.bundle)
         }
     }
 
@@ -532,7 +545,7 @@ final class AudioBufferEngine: ObservableObject {
         }
 
         do { try start() } catch {
-            engineError = "Failed to restart audio engine: \(error.localizedDescription)"
+            engineError = String(localized: "Failed to restart audio engine: \(error.localizedDescription)", bundle: LanguageManager.shared.bundle)
         }
     }
 

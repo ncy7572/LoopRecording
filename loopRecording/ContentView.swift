@@ -13,7 +13,9 @@ private struct ShareSheet: UIViewControllerRepresentable {
 
 struct ContentView: View {
     @StateObject private var engine = AudioBufferEngine()
-    
+    // Observed so the UI re-renders (re-resolving localized strings) on language change.
+    @EnvironmentObject private var language: LanguageManager
+
     // Settings panel
     @State private var showSettings = false
     // Exporting panel
@@ -32,7 +34,7 @@ struct ContentView: View {
     private var exportEnabled: Bool  { hasRecording && !isExporting }
 
     // Status badge
-    private var statusLabel: String {
+    private var statusKey: LocalizedStringKey {
         switch engine.state {
         case .ready: return "READY"
         case .recording: return "RECORDING"
@@ -65,6 +67,7 @@ struct ContentView: View {
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showSettings) {
             SettingsView(engine: engine)
+                .environmentObject(language)
         }
         .sheet(isPresented: Binding(
             get: { exportURL != nil },
@@ -187,12 +190,12 @@ struct ContentView: View {
                     .fill(statusColor)
                     .frame(width: 7, height: 7)
                     .accessibilityHidden(true)
-                Text(statusLabel)
+                Text(statusKey)
                     .font(.caption.bold())
                     .foregroundColor(statusColor)
                     .kerning(1.5)
             }
-            .accessibilityLabel("Status: \(statusLabel)")
+            .accessibilityLabel(Text("Status: ") + Text(statusKey))
 
         }
     }
@@ -249,7 +252,7 @@ struct ContentView: View {
                         .font(.system(size: 26))
                         .foregroundColor(engine.isRecording
                                          ? Color(red: 1, green: 0.35, blue: 0.35)
-                                         : Color.gray)
+                                         : .white)
                 }
             }
             .accessibilityLabel(engine.isRecording ? "Stop recording" : "Start recording")
@@ -286,4 +289,5 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
+        .environmentObject(LanguageManager.shared)
 }
