@@ -1,5 +1,25 @@
 import SwiftUI
 
+// MARK: - Amplitude scaling
+
+/// A robust display reference for the waveform. Using the single loudest bar
+/// (a lone clap/tap) as the reference flattens all quieter audio to a near-flat
+/// line; a high percentile of the non-silent bars ignores such outliers so the
+/// bulk of the recording stays visible and the scale is stable frame-to-frame.
+func waveformReference(_ amps: [Float]) -> Double {
+    var vals = amps.compactMap { $0 > 0.0001 ? Double($0) : nil }
+    guard !vals.isEmpty else { return 1 }
+    vals.sort()
+    let pct = vals[Int(Double(vals.count - 1) * 0.95)]
+    return max(pct, 0.02)   // floor avoids over-amplifying near-silence
+}
+
+/// Maps a bucket amplitude to a 0...1 bar level. The square root gives quiet
+/// sounds a visible height while keeping loud (clipped) sounds bounded.
+func waveformLevel(_ amp: Float, reference: Double) -> Double {
+    min(1.0, Double(amp) / reference).squareRoot()
+}
+
 // MARK: - WaveformView
 
 struct WaveformView: View {
@@ -143,8 +163,7 @@ private struct DetailWaveView: View {
         let mid = h / 2
         let w = size.width
 
-        let maxAmp = Double(amplitudes.max() ?? 0.001)
-        let norm = maxAmp > 0 ? 1.0 / maxAmp : 1.0
+        let reference = waveformReference(amplitudes)
         let barW = pw * 0.6
 
         let startIdx = max(0, Int(offset / pw) - 1)
@@ -154,8 +173,8 @@ private struct DetailWaveView: View {
         for i in startIdx...endIdx {
             guard CGFloat(i) < filledPt else { continue }
             let x = CGFloat(i) * pw - offset
-            let amp = Double(amplitudes[i]) * norm
-            let halfH = CGFloat(max(2, amp * Double(mid) * 0.88))
+            let level = waveformLevel(amplitudes[i], reference: reference)
+            let halfH = CGFloat(max(2, level * Double(mid) * 0.88))
             let color = CGFloat(i) < playheadPt ? green : greenDim
             ctx.fill(
                 Path(CGRect(x: x, y: mid - halfH, width: barW, height: halfH * 2)),
@@ -266,16 +285,15 @@ private struct OverviewWaveView: View {
         guard n > 0 else { return }
 
         let bw = w / CGFloat(n)
-        let maxAmp = Double(amplitudes.max() ?? 0.001)
-        let norm = maxAmp > 0 ? 1.0 / maxAmp : 1.0
+        let reference = waveformReference(amplitudes)
         let filledX = CGFloat(filledFraction) * w
         let phX = CGFloat(playheadFraction) * w
 
         for i in 0..<n {
             let x = CGFloat(i) * bw
             guard x <= filledX else { break }
-            let amp = Double(amplitudes[i]) * norm
-            let halfH = CGFloat(max(0.5, amp * Double(mid) * 0.85))
+            let level = waveformLevel(amplitudes[i], reference: reference)
+            let halfH = CGFloat(max(0.5, level * Double(mid) * 0.85))
             ctx.fill(
                 Path(CGRect(
                     x: x,
