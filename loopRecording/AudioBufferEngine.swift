@@ -579,7 +579,11 @@ final class AudioBufferEngine: ObservableObject {
             // isAtLiveEdge stays true — playhead is still at the end of the buffer
         } else {
             // Resume: jump to the live edge and start ingesting again.
+            // Recording is live again, so any snapshot captured when playback
+            // interrupted a previous session is obsolete — clearing it lets the
+            // next waveform tap suspend recording properly.
             stopPlayback()
+            prePlaybackSnapshot = nil
             ring?.isActive = true
             isRecording = true
             isAtLiveEdge = true
@@ -795,10 +799,12 @@ final class AudioBufferEngine: ObservableObject {
     // Save active recording state then stop the ring — called before entering playback.
     // Guards against being called twice (e.g. scrubbing fires many events).
     private func captureRecordingStateIfNeeded() {
-        guard prePlaybackSnapshot == nil else { return }
-        if isRecording {
+        if prePlaybackSnapshot == nil, isRecording {
             prePlaybackSnapshot = .recording
         }
+        // Always suspend ingestion, even if a snapshot already exists — a stale
+        // snapshot must never leave recording running underneath playback.
+        guard isRecording || ring?.isActive == true else { return }
         ring?.isActive = false
         isRecording = false
         state = filledSeconds > 0 ? .paused : .ready
